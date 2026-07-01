@@ -52,6 +52,7 @@ if(LLAMA_SERVER_SMT_VISION)
         server-smt-vision.cpp
         server-smt-vision.h
         ../mtmd/smt-audio-wrapper.cpp
+        ../mtmd/smt-vision-config.cpp
         ../mtmd/smt-vision-preprocess.cpp
         ../mtmd/smt-vision-wrapper.cpp
         ${SPACEMIT_ORT_SAMPLE_DIR}/spine_vision_engine.cc

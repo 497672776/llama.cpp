@@ -3,6 +3,7 @@
 #include "smt-vision-wrapper.h"
 
 #include "ggml-profile.h"
+#include "smt-vision-config.h"
 #include "spine_vision_engine.h"
 
 #include <cctype>
@@ -691,6 +692,7 @@ std::unique_ptr<smt_vision_context> smt_vision_context::create(const std::string
     if (!d.config.architectures.empty()) {
         d.arch_name = canonicalize_vision_architecture(d.config.architectures[0]);
     }
+    smt_vision_apply_architecture_defaults(d.arch_name, d.config.ep_config);
 
     // 2. Initialize ORT API
     onnxruntime::g_ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
