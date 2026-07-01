@@ -4976,11 +4976,55 @@ void server_routes::init_routes() {
         // TEI: https://huggingface.github.io/text-embeddings-inference/#/Text%20Embeddings%20Inference/rerank
         bool is_tei_format = body.contains("texts");
 
-        json query;
+        struct rerank_piece {
+            std::string              text;
+            std::vector<std::string> multimodal_data;
+
+            bool has_multimodal() const {
+                return !multimodal_data.empty();
+            }
+        };
+
+        auto parse_rerank_piece = [&](const json & value, const char * name, rerank_piece & out) -> bool {
+            constexpr char JSON_STRING_PROMPT_KEY[] = "prompt_string";
+            constexpr char JSON_MTMD_DATA_KEY[]     = "multimodal_data";
+
+            if (value.is_string()) {
+                out.text = value.get<std::string>();
+                return true;
+            }
+            if (!value.is_object() || !value.contains(JSON_STRING_PROMPT_KEY) ||
+                !value.at(JSON_STRING_PROMPT_KEY).is_string()) {
+                res->error(format_error_response(std::string("\"") + name +
+                                                     "\" must be a string or prompt object",
+                                                 ERROR_TYPE_INVALID_REQUEST));
+                return false;
+            }
+
+            out.text = value.at(JSON_STRING_PROMPT_KEY).get<std::string>();
+            if (value.contains(JSON_MTMD_DATA_KEY)) {
+                if (!value.at(JSON_MTMD_DATA_KEY).is_array()) {
+                    res->error(format_error_response(std::string("\"") + name +
+                                                         ".multimodal_data\" must be a string array",
+                                                     ERROR_TYPE_INVALID_REQUEST));
+                    return false;
+                }
+                for (const auto & entry : value.at(JSON_MTMD_DATA_KEY)) {
+                    if (!entry.is_string()) {
+                        res->error(format_error_response(std::string("\"") + name +
+                                                             ".multimodal_data\" must be a string array",
+                                                         ERROR_TYPE_INVALID_REQUEST));
+                        return false;
+                    }
+                    out.multimodal_data.push_back(entry.get<std::string>());
+                }
+            }
+            return true;
+        };
+
+        rerank_piece query;
         if (body.count("query") == 1) {
-            query = body.at("query");
-            if (!query.is_string()) {
-                res->error(format_error_response("\"query\" must be a string", ERROR_TYPE_INVALID_REQUEST));
+            if (!parse_rerank_piece(body.at("query"), "query", query)) {
                 return res;
             }
         } else {
@@ -4988,13 +5032,72 @@ void server_routes::init_routes() {
             return res;
         }
 
-        std::vector<std::string> documents =
-            json_value(body, "documents", json_value(body, "texts", std::vector<std::string>()));
-        if (documents.empty()) {
+        const json documents_json = body.contains("documents") ? body.at("documents") :
+                                                              body.value("texts", json::array());
+        if (!documents_json.is_array() || documents_json.empty()) {
             res->error(
-                format_error_response("\"documents\" must be a non-empty string array", ERROR_TYPE_INVALID_REQUEST));
+                format_error_response("\"documents\" must be a non-empty string or prompt object array",
+                                      ERROR_TYPE_INVALID_REQUEST));
             return res;
         }
+
+        std::vector<rerank_piece> documents_pieces;
+        std::vector<std::string>  documents;
+        documents_pieces.reserve(documents_json.size());
+        documents.reserve(documents_json.size());
+        for (const auto & document_json : documents_json) {
+            rerank_piece document;
+            if (!parse_rerank_piece(document_json, "documents[]", document)) {
+                return res;
+            }
+            documents.push_back(document.text);
+            documents_pieces.push_back(std::move(document));
+        }
+
+        const bool has_multimodal = query.has_multimodal() ||
+                                    std::any_of(documents_pieces.begin(), documents_pieces.end(),
+                                                [](const rerank_piece & document) {
+                                                    return document.has_multimodal();
+                                                });
+        if (has_multimodal && ctx_server.mctx == nullptr &&
+            !server_smt_vision_supports_prompt_embeddings(ctx_server.smt_ctx)) {
+            res->error(format_error_response("Multimodal rerank requires a multimodal-capable server",
+                                             ERROR_TYPE_NOT_SUPPORTED));
+            return res;
+        }
+
+        auto format_rerank_piece = [&](const rerank_piece & document) -> server_tokens {
+            if (!query.has_multimodal() && !document.has_multimodal()) {
+                return format_prompt_rerank(ctx_server.model_tgt, ctx_server.vocab, ctx_server.mctx, query.text,
+                                            document.text);
+            }
+
+            const char * rerank_prompt = llama_model_chat_template(ctx_server.model_tgt, "rerank");
+            if (rerank_prompt == nullptr) {
+                throw std::runtime_error("Multimodal rerank requires a rerank chat template");
+            }
+
+            std::string prompt = rerank_prompt;
+            string_replace_all(prompt, "{query}", query.text);
+            string_replace_all(prompt, "{document}", document.text);
+
+            json prompt_obj = {
+                {"prompt_string", prompt},
+                {"multimodal_data", json::array()},
+            };
+            for (const auto & data : query.multimodal_data) {
+                prompt_obj["multimodal_data"].push_back(data);
+            }
+            for (const auto & data : document.multimodal_data) {
+                prompt_obj["multimodal_data"].push_back(data);
+            }
+
+            auto inputs = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx,
+                                                 server_smt_vision_supports_prompt_embeddings(ctx_server.smt_ctx) ?
+                                                     ctx_server.smt_ctx : nullptr,
+                                                 prompt_obj, false, true);
+            return std::move(inputs[0]);
+        };
 
         int top_n = json_value(body, "top_n", (int) documents.size());
 
@@ -5005,8 +5108,7 @@ void server_routes::init_routes() {
             std::vector<server_task> tasks;
             tasks.reserve(documents.size());
             for (size_t i = 0; i < documents.size(); i++) {
-                auto tmp =
-                    format_prompt_rerank(ctx_server.model_tgt, ctx_server.vocab, ctx_server.mctx, query, documents[i]);
+                auto tmp          = format_rerank_piece(documents_pieces[i]);
                 server_task task = server_task(SERVER_TASK_TYPE_RERANK);
                 task.id          = rd.get_new_id();
                 task.tokens      = std::move(tmp);
