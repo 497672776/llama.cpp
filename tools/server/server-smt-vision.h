@@ -22,7 +22,8 @@ struct server_smt_image_chunk {
     int32_t grid_nx = 0;
     int32_t grid_ny = 0;
 
-    double t_encode_ms = 0.0; // encoder wall-clock time in ms
+    double t_image_decode_ms = 0.0; // image decode/preprocess wall-clock time in ms
+    double t_encode_ms       = 0.0; // encoder wall-clock time in ms
 };
 
 struct server_smt_vision_context;

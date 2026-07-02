@@ -271,6 +271,24 @@ struct result_timings {
     double prompt_per_token_ms = 0.0;
     double prompt_per_second = 0.0;
 
+    int32_t text_prompt_n = 0;
+    double text_prompt_ms = 0.0;
+    double text_prompt_per_token_ms = 0.0;
+    double text_prompt_per_second = 0.0;
+
+    int32_t vision_n = 0;
+    double image_decode_ms = 0.0;
+    double vision_encode_ms = 0.0;
+    double vision_prefill_ms = 0.0;
+    double vision_prefill_per_token_ms = 0.0;
+    double vision_prefill_per_second = 0.0;
+
+    int32_t audio_n = 0;
+    double audio_encode_ms = 0.0;
+    double audio_prefill_ms = 0.0;
+    double audio_prefill_per_token_ms = 0.0;
+    double audio_prefill_per_second = 0.0;
+
     int32_t predicted_n = -1;
     double predicted_ms = 0.0;
     double predicted_per_token_ms = 0.0;
@@ -475,6 +493,7 @@ struct server_task_result_embd : server_task_result {
     std::vector<std::vector<float>> embedding;
 
     int32_t n_tokens;
+    result_timings timings;
 
     // response formatting
     task_response_type res_type = TASK_RESPONSE_TYPE_NONE;
@@ -490,6 +509,7 @@ struct server_task_result_rerank : server_task_result {
     float score = -1e6;
 
     int32_t n_tokens;
+    result_timings timings;
 
     virtual json to_json() override;
 };

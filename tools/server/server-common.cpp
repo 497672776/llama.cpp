@@ -2220,6 +2220,86 @@ json convert_anthropic_to_oai(const json & body) {
     return oai_body;
 }
 
+static json aggregate_result_timings(const json & items) {
+    auto sum_int = [&](const char * key) {
+        int32_t total = 0;
+        for (const auto & item : items) {
+            if (item.contains("timings")) {
+                total += json_value(item.at("timings"), key, 0);
+            }
+        }
+        return total;
+    };
+    auto sum_double = [&](const char * key) {
+        double total = 0.0;
+        for (const auto & item : items) {
+            if (item.contains("timings")) {
+                total += json_value(item.at("timings"), key, 0.0);
+            }
+        }
+        return total;
+    };
+    auto per_token = [](double ms, int32_t n) {
+        return n > 0 ? ms / n : 0.0;
+    };
+    auto per_second = [](double ms, int32_t n) {
+        return n > 0 && ms > 0.0 ? 1e3 / ms * n : 0.0;
+    };
+
+    const int32_t cache_n     = sum_int("cache_n");
+    const int32_t prompt_n    = sum_int("prompt_n");
+    const double  prompt_ms   = sum_double("prompt_ms");
+    const int32_t predicted_n = sum_int("predicted_n");
+    const double  predicted_ms = sum_double("predicted_ms");
+
+    json out = {
+        { "cache_n", cache_n },
+        { "prompt_n", prompt_n },
+        { "prompt_ms", prompt_ms },
+        { "prompt_per_token_ms", per_token(prompt_ms, prompt_n) },
+        { "prompt_per_second", per_second(prompt_ms, prompt_n) },
+        { "predicted_n", predicted_n },
+        { "predicted_ms", predicted_ms },
+        { "predicted_per_token_ms", per_token(predicted_ms, predicted_n) },
+        { "predicted_per_second", per_second(predicted_ms, predicted_n) },
+    };
+
+    const int32_t text_n   = sum_int("text_prompt_n");
+    const double  text_ms  = sum_double("text_prompt_ms");
+    if (text_n > 0 || text_ms > 0.0) {
+        out["text_prompt_n"] = text_n;
+        out["text_prompt_ms"] = text_ms;
+        out["text_prompt_per_token_ms"] = per_token(text_ms, text_n);
+        out["text_prompt_per_second"] = per_second(text_ms, text_n);
+    }
+
+    const int32_t vision_n = sum_int("vision_n");
+    const double  image_decode_ms = sum_double("image_decode_ms");
+    const double  vision_encode_ms = sum_double("vision_encode_ms");
+    const double  vision_prefill_ms = sum_double("vision_prefill_ms");
+    if (vision_n > 0 || image_decode_ms > 0.0 || vision_encode_ms > 0.0 || vision_prefill_ms > 0.0) {
+        out["vision_n"] = vision_n;
+        out["image_decode_ms"] = image_decode_ms;
+        out["vision_encode_ms"] = vision_encode_ms;
+        out["vision_prefill_ms"] = vision_prefill_ms;
+        out["vision_prefill_per_token_ms"] = per_token(vision_prefill_ms, vision_n);
+        out["vision_prefill_per_second"] = per_second(vision_prefill_ms, vision_n);
+    }
+
+    const int32_t audio_n = sum_int("audio_n");
+    const double  audio_encode_ms = sum_double("audio_encode_ms");
+    const double  audio_prefill_ms = sum_double("audio_prefill_ms");
+    if (audio_n > 0 || audio_encode_ms > 0.0 || audio_prefill_ms > 0.0) {
+        out["audio_n"] = audio_n;
+        out["audio_encode_ms"] = audio_encode_ms;
+        out["audio_prefill_ms"] = audio_prefill_ms;
+        out["audio_prefill_per_token_ms"] = per_token(audio_prefill_ms, audio_n);
+        out["audio_prefill_per_second"] = per_second(audio_prefill_ms, audio_n);
+    }
+
+    return out;
+}
+
 json format_embeddings_response_oaicompat(const json &        request,
                                           const std::string & model_name,
                                           const json &        embeddings,
@@ -2256,7 +2336,8 @@ json format_embeddings_response_oaicompat(const json &        request,
         { "model", json_value(request, "model", model_name) },
         { "object", "list" },
         { "usage", json{ { "prompt_tokens", n_tokens }, { "total_tokens", n_tokens } } },
-        { "data", data }
+        { "data", data },
+        { "timings", aggregate_result_timings(embeddings) }
     };
 
     return res;
@@ -2300,7 +2381,8 @@ json format_response_rerank(const json &               request,
         { "model", json_value(request, "model", model_name) },
         { "object", "list" },
         { "usage", json{ { "prompt_tokens", n_tokens }, { "total_tokens", n_tokens } } },
-        { "results", results }
+        { "results", results },
+        { "timings", aggregate_result_timings(ranks) }
     };
 
     return res;

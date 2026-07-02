@@ -199,6 +199,7 @@ struct server_slot {
     double t_token_generation  = 0.0;  // ms
 
     // encoder stats (audio / vision)
+    double  t_vision_decode_ms  = 0.0;
     double  t_vision_encode_ms  = 0.0;
     double  t_vision_prefill_ms = 0.0;
     int32_t n_vision_tokens     = 0;
@@ -239,6 +240,7 @@ struct server_slot {
         n_draft_accepted = 0;
 
         // clear encoder stats
+        t_vision_decode_ms  = 0.0;
         t_vision_encode_ms  = 0.0;
         t_vision_prefill_ms = 0.0;
         n_vision_tokens     = 0;
@@ -417,13 +419,38 @@ struct server_slot {
 
         timings.prompt_n            = n_prompt_tokens_processed;
         timings.prompt_ms           = t_prompt_processing;
-        timings.prompt_per_token_ms = t_prompt_processing / n_prompt_tokens_processed;
-        timings.prompt_per_second   = 1e3 / t_prompt_processing * n_prompt_tokens_processed;
+        timings.prompt_per_token_ms = n_prompt_tokens_processed > 0 ? t_prompt_processing / n_prompt_tokens_processed : 0.0;
+        timings.prompt_per_second   = n_prompt_tokens_processed > 0 && t_prompt_processing > 0.0 ?
+                                          1e3 / t_prompt_processing * n_prompt_tokens_processed : 0.0;
+
+        timings.vision_n                         = n_vision_tokens;
+        timings.image_decode_ms                  = t_vision_decode_ms;
+        timings.vision_encode_ms                 = t_vision_encode_ms;
+        timings.vision_prefill_ms                = t_vision_prefill_ms;
+        timings.vision_prefill_per_token_ms      = n_vision_tokens > 0 ? t_vision_prefill_ms / n_vision_tokens : 0.0;
+        timings.vision_prefill_per_second        = n_vision_tokens > 0 && t_vision_prefill_ms > 0.0 ?
+                                                       1e3 / t_vision_prefill_ms * n_vision_tokens : 0.0;
+
+        timings.audio_n                    = n_audio_tokens;
+        timings.audio_encode_ms            = t_audio_encode_ms;
+        timings.audio_prefill_ms           = t_audio_prefill_ms;
+        timings.audio_prefill_per_token_ms = n_audio_tokens > 0 ? t_audio_prefill_ms / n_audio_tokens : 0.0;
+        timings.audio_prefill_per_second   = n_audio_tokens > 0 && t_audio_prefill_ms > 0.0 ?
+                                                 1e3 / t_audio_prefill_ms * n_audio_tokens : 0.0;
+
+        const int32_t n_text_tokens = n_prompt_tokens_processed - n_vision_tokens - n_audio_tokens;
+        const double  t_text_ms     = t_prompt_processing;
+        timings.text_prompt_n            = n_text_tokens;
+        timings.text_prompt_ms           = t_text_ms > 0.0 ? t_text_ms : 0.0;
+        timings.text_prompt_per_token_ms = n_text_tokens > 0 ? timings.text_prompt_ms / n_text_tokens : 0.0;
+        timings.text_prompt_per_second   = n_text_tokens > 0 && timings.text_prompt_ms > 0.0 ?
+                                               1e3 / timings.text_prompt_ms * n_text_tokens : 0.0;
 
         timings.predicted_n            = n_decoded;
         timings.predicted_ms           = t_token_generation;
-        timings.predicted_per_token_ms = t_token_generation / n_decoded;
-        timings.predicted_per_second   = 1e3 / t_token_generation * n_decoded;
+        timings.predicted_per_token_ms = n_decoded > 0 ? t_token_generation / n_decoded : 0.0;
+        timings.predicted_per_second   = n_decoded > 0 && t_token_generation > 0.0 ?
+                                             1e3 / t_token_generation * n_decoded : 0.0;
 
         // Add speculative metrics
         if (n_draft_total > 0) {
@@ -2054,6 +2081,7 @@ struct server_context_impl {
         res->index    = slot.task->index;
         res->n_tokens = slot.task->n_tokens();
         res->res_type = slot.task->params.res_type;
+        res->timings  = slot.get_timings();
 
         const int n_embd_out = llama_model_n_embd_out(model_tgt);
 
@@ -2099,6 +2127,7 @@ struct server_context_impl {
         res->id       = slot.task->id;
         res->index    = slot.task->index;
         res->n_tokens = slot.task->n_tokens();
+        res->timings  = slot.get_timings();
 
         for (int i = 0; i < batch.n_tokens; ++i) {
             if (!batch.logits[i] || batch.seq_id[i][0] != slot.id) {
@@ -3239,6 +3268,7 @@ struct server_context_impl {
                                     slot.t_audio_prefill_ms += t_prefill_ms;
                                     slot.n_audio_tokens += chunk.n_tokens;
                                 } else {
+                                    slot.t_vision_decode_ms += chunk.t_image_decode_ms;
                                     slot.t_vision_encode_ms += chunk.t_encode_ms;
                                     slot.t_vision_prefill_ms += t_prefill_ms;
                                     slot.n_vision_tokens += chunk.n_tokens;
@@ -3590,6 +3620,7 @@ struct server_context_impl {
                 if (slot.state == SLOT_STATE_DONE_PROMPT) {
                     if (slot.task->type == SERVER_TASK_TYPE_EMBEDDING) {
                         // prompt evaluated for embedding
+                        slot.t_prompt_processing = (ggml_time_us() - slot.t_start_process_prompt) / 1e3;
                         send_embedding(slot, batch_view);
                         slot.release();
                         slot.i_batch = -1;
@@ -3597,6 +3628,7 @@ struct server_context_impl {
                     }
 
                     if (slot.task->type == SERVER_TASK_TYPE_RERANK) {
+                        slot.t_prompt_processing = (ggml_time_us() - slot.t_start_process_prompt) / 1e3;
                         send_rerank(slot, batch_view);
                         slot.release();
                         slot.i_batch = -1;

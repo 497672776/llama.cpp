@@ -1339,10 +1339,12 @@ server_smt_image_chunk server_smt_vision_encode_image_bin(server_smt_vision_cont
     }
 
     std::vector<uint8_t> smt_input = data;
+    const int64_t        t_preproc0 = ggml_time_us();
     auto                 preproc =
         smt_vision_preprocess_if_image(data, ctx->architecture, ctx->smt_vision ? ctx->smt_vision->input_width() : 0,
                                        ctx->smt_vision ? ctx->smt_vision->input_height() : 0,
                                        ctx->smt_vision ? &ctx->smt_vision->preprocess_config() : nullptr);
+    const double t_image_decode_ms = (ggml_time_us() - t_preproc0) / 1e3;
     if (preproc.was_image) {
         smt_input = std::move(preproc.tensor_bytes);
     }
@@ -1351,6 +1353,7 @@ server_smt_image_chunk server_smt_vision_encode_image_bin(server_smt_vision_cont
 
     server_smt_image_chunk out;
     out.type = server_smt_media_type::image;
+    out.t_image_decode_ms = t_image_decode_ms;
     try {
         const int64_t t0 = ggml_time_us();
         out.embd         = ctx->smt_vision->encode_image(tmp_file);

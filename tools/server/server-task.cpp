@@ -640,6 +640,30 @@ json result_timings::to_json() const {
         {"predicted_per_second",   predicted_per_second},
     };
 
+    if (text_prompt_n > 0) {
+        base["text_prompt_n"] = text_prompt_n;
+        base["text_prompt_ms"] = text_prompt_ms;
+        base["text_prompt_per_token_ms"] = text_prompt_per_token_ms;
+        base["text_prompt_per_second"] = text_prompt_per_second;
+    }
+
+    if (vision_n > 0 || image_decode_ms > 0.0 || vision_encode_ms > 0.0 || vision_prefill_ms > 0.0) {
+        base["vision_n"] = vision_n;
+        base["image_decode_ms"] = image_decode_ms;
+        base["vision_encode_ms"] = vision_encode_ms;
+        base["vision_prefill_ms"] = vision_prefill_ms;
+        base["vision_prefill_per_token_ms"] = vision_prefill_per_token_ms;
+        base["vision_prefill_per_second"] = vision_prefill_per_second;
+    }
+
+    if (audio_n > 0 || audio_encode_ms > 0.0 || audio_prefill_ms > 0.0) {
+        base["audio_n"] = audio_n;
+        base["audio_encode_ms"] = audio_encode_ms;
+        base["audio_prefill_ms"] = audio_prefill_ms;
+        base["audio_prefill_per_token_ms"] = audio_prefill_per_token_ms;
+        base["audio_prefill_per_second"] = audio_prefill_per_second;
+    }
+
     if (draft_n > 0) {
         base["draft_n"] = draft_n;
         base["draft_n_accepted"] = draft_n_accepted;
@@ -1847,6 +1871,7 @@ json server_task_result_embd::to_json_non_oaicompat() {
     return json {
         {"index",     index},
         {"embedding", embedding},
+        {"timings",   timings.to_json()},
     };
 }
 
@@ -1855,6 +1880,7 @@ json server_task_result_embd::to_json_oaicompat() {
         {"index",            index},
         {"embedding",        embedding[0]},
         {"tokens_evaluated", n_tokens},
+        {"timings",          timings.to_json()},
     };
 }
 
@@ -1866,6 +1892,7 @@ json server_task_result_rerank::to_json() {
         {"index",            index},
         {"score",            score},
         {"tokens_evaluated", n_tokens},
+        {"timings",          timings.to_json()},
     };
 }
 
