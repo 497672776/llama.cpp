@@ -943,6 +943,27 @@ static int decode_embd(llama_context * lctx,
     return 0;
 }
 
+static std::vector<float> expand_deepstack_image_embeddings(const std::vector<float> & embd,
+                                                            int32_t                    n_tokens,
+                                                            int32_t                    n_embd,
+                                                            int32_t                    n_model_embd_inp) {
+    if (n_tokens <= 0 || n_embd <= 0 || n_model_embd_inp <= 0 || n_model_embd_inp == n_embd) {
+        return {};
+    }
+
+    if (n_model_embd_inp < n_embd || embd.size() != (size_t) n_tokens * n_embd) {
+        throw std::runtime_error("Invalid SMT image embedding size for model input width");
+    }
+
+    std::vector<float> expanded((size_t) n_tokens * n_model_embd_inp, 0.0f);
+    for (int32_t i = 0; i < n_tokens; ++i) {
+        const float * src = embd.data() + (size_t) i * n_embd;
+        float *       dst = expanded.data() + (size_t) i * n_model_embd_inp;
+        std::copy(src, src + n_embd, dst);
+    }
+    return expanded;
+}
+
 server_smt_vision_context * server_smt_vision_init(llama_context * lctx, const std::string & config_dir, bool warmup) {
 #if defined(LLAMA_SERVER_SMT_VISION)
     auto        ctx = std::make_unique<server_smt_vision_context>();
@@ -1416,6 +1437,7 @@ int32_t server_smt_vision_decode_chunk(llama_context *                   lctx,
     if (n_embd_tokens <= 0) {
         return -1;
     }
+    const int32_t n_chunk_embd = (int32_t) (chunk.embd.size() / (size_t) n_embd_tokens);
 
     const std::vector<llama_token> * tok_beg       = &ctx->tok_img_beg;
     const std::vector<llama_token> * tok_end       = &ctx->tok_img_end;
@@ -1438,7 +1460,14 @@ int32_t server_smt_vision_decode_chunk(llama_context *                   lctx,
     }
 
     const bool logits_on_embd = logits_last && tok_end->empty();
-    if (decode_embd(lctx, chunk.embd.data(), n_embd_tokens, ctx->hidden_size, n_past, seq_id, n_batch, logits_on_embd,
+    const llama_model * model            = llama_get_model(lctx);
+    const int32_t       n_model_embd_inp = model ? llama_model_n_embd_inp(model) : ctx->hidden_size;
+    const int32_t       n_decode_embd    = chunk.type == server_smt_media_type::image ? n_model_embd_inp : n_chunk_embd;
+    const std::vector<float> expanded_embd = chunk.type == server_smt_media_type::image ?
+            expand_deepstack_image_embeddings(chunk.embd, n_embd_tokens, n_chunk_embd, n_decode_embd) :
+            std::vector<float>{};
+    const float * embd_data = expanded_embd.empty() ? chunk.embd.data() : expanded_embd.data();
+    if (decode_embd(lctx, embd_data, n_embd_tokens, n_decode_embd, n_past, seq_id, n_batch, logits_on_embd,
                     use_mrope_pos, grid_nx, grid_ny) != 0) {
         return -1;
     }

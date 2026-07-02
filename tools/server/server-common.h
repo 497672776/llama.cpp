@@ -235,6 +235,12 @@ public:
     server_tokens clone() const;
 };
 
+inline bool server_tokens_can_reuse_prompt_cache(
+        const server_tokens & cached,
+        const server_tokens & input) {
+    return !cached.has_mtmd && !input.has_mtmd;
+}
+
 
 //
 // tokenizer and input processing utils
@@ -391,3 +397,9 @@ server_tokens format_prompt_rerank(
         mtmd_context * mctx,
         const std::string & query,
         const std::string & doc);
+
+std::string format_prompt_qwen3vl_reranker(
+        const std::string & query,
+        const std::string & doc,
+        size_t n_query_media = 0,
+        size_t n_doc_media = 0);

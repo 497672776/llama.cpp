@@ -2587,6 +2587,48 @@ llama_tokens format_prompt_infill(const llama_vocab *  vocab,
     return embd_inp;
 }
 
+static void append_media_markers(std::string & prompt, size_t n_media) {
+    for (size_t i = 0; i < n_media; ++i) {
+        prompt += "<__media__>";
+    }
+}
+
+static size_t count_media_markers(const std::string & text, const std::string & marker) {
+    size_t count = 0;
+    size_t pos   = 0;
+    while ((pos = text.find(marker, pos)) != std::string::npos) {
+        ++count;
+        pos += marker.size();
+    }
+    return count;
+}
+
+static size_t media_markers_to_insert(const std::string & text, size_t n_media) {
+    const size_t existing = count_media_markers(text, "<__media__>") + count_media_markers(text, "<__image__>");
+    return existing >= n_media ? 0 : n_media - existing;
+}
+
+std::string format_prompt_qwen3vl_reranker(const std::string & query,
+                                           const std::string & doc,
+                                           size_t              n_query_media,
+                                           size_t              n_doc_media) {
+    std::string prompt =
+        "<|im_start|>system\n"
+        "Judge whether the Document meets the requirements based on the Query and the Instruct provided. "
+        "Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n"
+        "<|im_start|>user\n"
+        "<Instruct>: Given a search query, retrieve relevant candidates that answer the query."
+        "<Query>:";
+    append_media_markers(prompt, media_markers_to_insert(query, n_query_media));
+    prompt += query;
+    prompt += "\n<Document>:";
+    append_media_markers(prompt, media_markers_to_insert(doc, n_doc_media));
+    prompt += doc;
+    prompt += "<|im_end|>\n"
+              "<|im_start|>assistant\n";
+    return prompt;
+}
+
 server_tokens format_prompt_rerank(const struct llama_model * model,
                                    const struct llama_vocab * vocab,
                                    mtmd_context *             mctx,
@@ -2594,9 +2636,14 @@ server_tokens format_prompt_rerank(const struct llama_model * model,
                                    const std::string &        doc) {
     server_tokens result = {};
 
-    const char * rerank_prompt = llama_model_chat_template(model, "rerank");
+    const char * reranker_prompt = llama_model_chat_template(model, "reranker");
+    const char * rerank_prompt   = llama_model_chat_template(model, "rerank");
 
-    if (rerank_prompt != nullptr) {
+    if (reranker_prompt != nullptr) {
+        server_tokens tokens = tokenize_input_subprompt(vocab, mctx, nullptr,
+                                                       format_prompt_qwen3vl_reranker(query, doc), false, true);
+        result.push_back(tokens);
+    } else if (rerank_prompt != nullptr) {
         std::string prompt = rerank_prompt;
         string_replace_all(prompt, "{query}", query);
         string_replace_all(prompt, "{document}", doc);
