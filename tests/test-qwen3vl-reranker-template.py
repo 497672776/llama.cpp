@@ -41,6 +41,14 @@ class Qwen3VLRerankerTemplateTest(unittest.TestCase):
         self.assertIn("format_qwen3vl_embedding_inputs", server_context)
         self.assertIn("prompt = format_qwen3vl_embedding_inputs", server_context)
 
+    def test_prompt_object_multimodal_data_accepts_data_urls(self):
+        server_common = (ROOT / "tools/server/server-common.cpp").read_text()
+
+        self.assertIn("base64_decode_multimodal_data", server_common)
+        self.assertIn('string_starts_with(parts[0], "data:")', server_common)
+        self.assertIn('string_ends_with(parts[0], "base64")', server_common)
+        self.assertIn("files.push_back(base64_decode_multimodal_data(entry))", server_common)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -230,6 +230,14 @@ static inline raw_buffer base64_decode(const std::string & encoded_string) {
     return ret;
 }
 
+static inline raw_buffer base64_decode_multimodal_data(const std::string & data) {
+    const std::vector<std::string> parts = string_split<std::string>(data, /*separator*/ ',');
+    if (parts.size() == 2 && string_starts_with(parts[0], "data:") && string_ends_with(parts[0], "base64")) {
+        return base64_decode(parts[1]);
+    }
+    return base64_decode(data);
+}
+
 //
 // server_tokens implementation
 //
@@ -1221,7 +1229,7 @@ static server_tokens tokenize_input_subprompt(const llama_vocab *         vocab,
             // JSON object with prompt and multimodal key.
             std::vector<raw_buffer> files;
             for (const auto & entry : json_prompt.at(JSON_MTMD_DATA_KEY)) {
-                files.push_back(base64_decode(entry));
+                files.push_back(base64_decode_multimodal_data(entry));
             }
             if (server_smt_vision_supports_prompt_embeddings(smt_ctx)) {
                 return process_smt_prompt(smt_ctx, vocab, json_prompt.at(JSON_STRING_PROMPT_KEY), files, add_special,
